@@ -12,4 +12,8 @@ winit = "0.30.12"
 
 [dependencies.windows]
 version = ">=0.59, <=0.62"
-features = ["Data_Xml_Dom", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"]
+features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Devices_Display",
+]
