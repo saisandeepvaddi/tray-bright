@@ -7,8 +7,10 @@ edition = "2024"
 anyhow = "1.0.100"
 env_logger = "0.11.8"
 log = "0.4.29"
+serde = { version = "1.0.228", features = ["derive"] }
 tray-icon = "0.21.3"
 winit = "0.30.12"
+wmi = "0.18.0"
 
 [dependencies.windows]
 version = ">=0.59, <=0.62"
