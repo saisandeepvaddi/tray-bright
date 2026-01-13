@@ -1,12 +1,23 @@
 use serde::Deserialize;
 use windows::Win32::Devices::Display::{
-    DestroyPhysicalMonitors, GetNumberOfPhysicalMonitorsFromHMONITOR,
-    GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR,
+    DestroyPhysicalMonitors, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
+    GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR, SetMonitorBrightness,
 };
 use windows::Win32::Foundation::{LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 use windows::core::BOOL;
 use wmi::WMIConnection;
+
+// Cross-platform trait for monitor brightness control
+pub trait MonitorControl {
+    fn new(name: String, handle: PHYSICAL_MONITOR) -> Self;
+    fn poll_current_brightness(&mut self) -> Result<u8, anyhow::Error>;
+    fn get_current_brightness(&self) -> Option<u8>;
+    fn set_brightness(&mut self, value: u8) -> Result<(), anyhow::Error>;
+    fn increase_brightness(&mut self, percent: u8) -> Result<(), anyhow::Error>;
+    fn decrease_brightness(&mut self, percent: u8) -> Result<(), anyhow::Error>;
+    fn name(&self) -> &str;
+}
 
 // WMI Monitor data structure for getting real monitor names
 #[derive(Deserialize, Debug)]
@@ -16,10 +27,87 @@ struct WmiMonitorID {
     user_friendly_name: Option<Vec<u16>>,
 }
 
-// Monitor info combining name and handle for brightness control
-pub struct MonitorInfo {
-    pub name: String,
-    pub handle: PHYSICAL_MONITOR,
+// Windows-specific monitor implementation
+pub struct Monitor {
+    name: String,
+    handle: PHYSICAL_MONITOR,
+    current_brightness: Option<u8>,
+}
+
+impl MonitorControl for Monitor {
+    fn new(name: String, handle: PHYSICAL_MONITOR) -> Self {
+        Monitor {
+            name,
+            handle,
+            current_brightness: None,
+        }
+    }
+
+    fn poll_current_brightness(&mut self) -> Result<u8, anyhow::Error> {
+        unsafe {
+            let mut min: u32 = 0;
+            let mut current: u32 = 0;
+            let mut max: u32 = 0;
+
+            let result = GetMonitorBrightness(
+                self.handle.hPhysicalMonitor,
+                &mut min,
+                &mut current,
+                &mut max,
+            );
+
+            if result == 0 {
+                return Err(anyhow::anyhow!("GetMonitorBrightness failed"));
+            }
+
+            let brightness = current as u8;
+            self.current_brightness = Some(brightness);
+            Ok(brightness)
+        }
+    }
+
+    fn get_current_brightness(&self) -> Option<u8> {
+        self.current_brightness
+    }
+
+    fn set_brightness(&mut self, value: u8) -> Result<(), anyhow::Error> {
+        let clamped_value = value.min(100);
+
+        unsafe {
+            let result = SetMonitorBrightness(self.handle.hPhysicalMonitor, clamped_value as u32);
+
+            if result == 0 {
+                return Err(anyhow::anyhow!("SetMonitorBrightness failed"));
+            }
+        }
+
+        self.current_brightness = Some(clamped_value);
+        Ok(())
+    }
+
+    fn increase_brightness(&mut self, percent: u8) -> Result<(), anyhow::Error> {
+        let current = match self.current_brightness {
+            Some(b) => b,
+            None => self.poll_current_brightness()?,
+        };
+
+        let new_brightness = (current as u16 + percent as u16).min(100) as u8;
+        self.set_brightness(new_brightness)
+    }
+
+    fn decrease_brightness(&mut self, percent: u8) -> Result<(), anyhow::Error> {
+        let current = match self.current_brightness {
+            Some(b) => b,
+            None => self.poll_current_brightness()?,
+        };
+
+        let new_brightness = (current as i16 - percent as i16).max(0) as u8;
+        self.set_brightness(new_brightness)
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
 }
 
 // Callback for EnumDisplayMonitors to collect HMONITORs
@@ -99,15 +187,15 @@ pub fn get_physical_monitor_handles() -> Result<Vec<PHYSICAL_MONITOR>, anyhow::E
 }
 
 // Get complete monitor information (names + handles)
-pub fn get_monitors() -> Result<Vec<MonitorInfo>, anyhow::Error> {
+pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
     let names = get_wmi_monitor_names()?;
     let handles = get_physical_monitor_handles()?;
 
     // Match names to handles (assuming they're in the same order)
-    let monitors: Vec<MonitorInfo> = names
+    let monitors: Vec<Monitor> = names
         .into_iter()
         .zip(handles.into_iter())
-        .map(|(name, handle)| MonitorInfo { name, handle })
+        .map(|(name, handle)| Monitor::new(name, handle))
         .collect();
 
     Ok(monitors)
@@ -122,15 +210,52 @@ pub fn cleanup_monitor_handles(handles: &mut [PHYSICAL_MONITOR]) -> Result<(), a
 }
 
 fn main() {
-    println!("=== Monitor Detection ===\n");
+    println!("=== Monitor Brightness Control Test ===\n");
 
     match get_monitors() {
-        Ok(monitors) => {
-            println!("Found {} monitors:", monitors.len());
-            for (i, monitor) in monitors.iter().enumerate() {
-                let handle_ptr =
-                    unsafe { std::ptr::addr_of!(monitor.handle.hPhysicalMonitor).read_unaligned() };
-                println!("  {}. {} (handle: {:?})", i + 1, monitor.name, handle_ptr);
+        Ok(mut monitors) => {
+            println!("Found {} monitors:\n", monitors.len());
+
+            for (i, monitor) in monitors.iter_mut().enumerate() {
+                println!("Monitor {}: {}", i + 1, monitor.name());
+
+                // Test brightness polling
+                match monitor.poll_current_brightness() {
+                    Ok(brightness) => {
+                        println!("  Current brightness: {}%", brightness);
+
+                        // Test increase brightness by 10%
+                        println!("  Testing: Increase by 10%...");
+                        if let Err(e) = monitor.increase_brightness(10) {
+                            println!("    Failed to increase: {}", e);
+                        } else {
+                            println!(
+                                "    New brightness: {}%",
+                                monitor.get_current_brightness().unwrap_or(0)
+                            );
+                        }
+
+                        // Wait a moment
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+
+                        // Test decrease brightness by 10%
+                        println!("  Testing: Decrease by 10%...");
+                        if let Err(e) = monitor.decrease_brightness(10) {
+                            println!("    Failed to decrease: {}", e);
+                        } else {
+                            println!(
+                                "    Restored brightness: {}%",
+                                monitor.get_current_brightness().unwrap_or(0)
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        println!("  Failed to get brightness: {}", e);
+                        continue;
+                    }
+                }
+
+                println!();
             }
 
             // Clean up handles
