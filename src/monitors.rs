@@ -229,7 +229,11 @@ pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
     let handles = get_physical_monitor_handles()?;
 
     // Match names to handles (assuming they're in the same order)
-    let monitors: Vec<Monitor> = names
+    // let monitors: Vec<Monitor> = names
+    //     .into_iter()
+    //     .zip(handles.into_iter().rev())
+    //     .map(|(name, handle)| Monitor::new(name, handle))
+    //     .collect()       .clone()
         .into_iter()
         .zip(handles.into_iter().rev())
         .map(|(name, handle)| Monitor::new(name, handle))
