@@ -229,15 +229,23 @@ pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
     let handles = get_physical_monitor_handles()?;
 
     // Match names to handles (assuming they're in the same order)
-    // let monitors: Vec<Monitor> = names
-    //     .into_iter()
-    //     .zip(handles.into_iter().rev())
-    //     .map(|(name, handle)| Monitor::new(name, handle))
-    //     .collect()       .clone()
+    let monitors: Vec<Monitor> = names
         .into_iter()
         .zip(handles.into_iter().rev())
         .map(|(name, handle)| Monitor::new(name, handle))
         .collect();
+
+    // The above wmi monitor names may not be in correct order. Uncomment and allow this way in a settings view somewhere.
+    // let monitors: Vec<Monitor> = handles
+    //     .into_iter()
+    //     .map(|handle| {
+    //         let description = handle.szPhysicalMonitorDescription;
+    //         let name = String::from_utf16_lossy(&description)
+    //             .trim_matches('\0')
+    //             .to_string();
+    //         Monitor::new(name, handle)
+    //     })
+    //     .collect();
 
     Ok(monitors)
 }
