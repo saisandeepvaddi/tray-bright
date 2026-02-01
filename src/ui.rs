@@ -41,10 +41,22 @@ impl TrayBrightUI {
         for mon in &mut self.monitors {
             ui.vertical(|ui| {
                 ui.label(&mon.name);
+                let min = mon.min_brightness.unwrap_or(0);
+                // let cur = mon.current_brightness.unwrap_or(0);
+                let max = mon.max_brightness.unwrap_or(0);
+                let mut cur = mon.current_brightness.unwrap_or(0);
                 ui.horizontal(|ui| {
-                    ui.label(mon.min_brightness.unwrap_or(0).to_string());
-                    ui.label(mon.current_brightness.unwrap_or(0).to_string());
-                    ui.label(mon.max_brightness.unwrap_or(0).to_string());
+                    ui.label(min.to_string());
+                    let slider = ui.add(egui::Slider::new(&mut cur, min..=max));
+                    ui.label(max.to_string());
+
+                    if slider.changed() {
+                        mon.current_brightness = Some(cur);
+                    }
+
+                    if slider.drag_stopped() {
+                        let _ = mon.set_brightness(cur);
+                    }
                 })
             });
         }
