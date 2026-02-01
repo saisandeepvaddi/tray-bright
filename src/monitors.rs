@@ -257,14 +257,3 @@ pub fn cleanup_monitor_handles(handles: &mut [PHYSICAL_MONITOR]) -> Result<(), a
     }
     Ok(())
 }
-
-pub fn cleanup_all_monitor_handles() -> Result<(), anyhow::Error> {
-    let Ok(monitors) = get_monitors() else {
-        return Err(anyhow!("Error"));
-    };
-    let mut handles: Vec<PHYSICAL_MONITOR> = monitors.into_iter().map(|m| m.handle).collect();
-    if let Err(e) = cleanup_monitor_handles(&mut handles) {
-        eprintln!("Failed to clean up monitor handles: {}", e);
-    }
-    Ok(())
-}
