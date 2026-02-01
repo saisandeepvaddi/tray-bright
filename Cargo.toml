@@ -5,11 +5,8 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-eframe = "0.33.3"
+eframe = {version ="0.33.3", default-features = false, features = ["glow", "accesskit", "default_fonts",]}
 egui = "0.33.3"
-egui-winit = "0.33.3"
-env_logger = "0.11.8"
-log = "0.4.29"
 serde = { version = "1.0.228", features = ["derive"] }
 tray-icon = "0.21.3"
 winit = "0.30.12"
@@ -22,3 +19,10 @@ features = [
   "Win32_Graphics_Gdi",
   "Win32_Devices_Display",
 ]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
