@@ -8,6 +8,10 @@ use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 use windows::core::BOOL;
 use wmi::WMIConnection;
 
+use crate::ui::{TrayBrightUI, get_app_options};
+
+mod ui;
+
 // Cross-platform trait for monitor brightness control
 pub trait MonitorControl {
     fn new(name: String, handle: PHYSICAL_MONITOR) -> Self;
@@ -245,59 +249,60 @@ pub fn cleanup_monitor_handles(handles: &mut [PHYSICAL_MONITOR]) -> Result<(), a
     Ok(())
 }
 
-fn main() {
+fn main() -> eframe::Result {
     println!("=== Monitor Brightness Control Test ===\n");
 
     match get_monitors() {
         Ok(mut monitors) => {
             println!("Found {} monitors:\n", monitors.len());
 
-            for (i, monitor) in monitors.iter_mut().enumerate() {
-                println!("Monitor {}: {}", i + 1, monitor.name());
+            // for (i, monitor) in monitors.iter_mut().enumerate() {
+            //     println!("Monitor {}: {}", i + 1, monitor.name());
 
-                // Test brightness polling
-                match monitor.poll_current_brightness() {
-                    Ok((min, current, max)) => {
-                        println!(
-                            "  Brightness range: [min: {}, current: {}, max: {}]",
-                            min, current, max
-                        );
+            //     // Test brightness polling
+            //     match monitor.poll_current_brightness() {
+            //         Ok((min, current, max)) => {
+            //             println!(
+            //                 "  Brightness range: [min: {}, current: {}, max: {}]",
+            //                 min, current, max
+            //             );
 
-                        // Test increase brightness by 10%
-                        println!("  Testing: Increase by 10%...");
-                        if let Err(e) = monitor.increase_brightness(10) {
-                            println!("    Failed to increase: {}", e);
-                        } else {
-                            println!(
-                                "    New brightness: {}",
-                                monitor.get_current_brightness().unwrap_or(0)
-                            );
-                        }
+            //             // Test increase brightness by 10%
+            //             println!("  Testing: Increase by 10%...");
+            //             if let Err(e) = monitor.increase_brightness(10) {
+            //                 println!("    Failed to increase: {}", e);
+            //             } else {
+            //                 println!(
+            //                     "    New brightness: {}",
+            //                     monitor.get_current_brightness().unwrap_or(0)
+            //                 );
+            //             }
 
-                        // Wait a moment
-                        std::thread::sleep(std::time::Duration::from_secs(1));
+            //             // Wait a moment
+            //             std::thread::sleep(std::time::Duration::from_secs(1));
 
-                        // Test decrease brightness by 10%
-                        println!("  Testing: Decrease by 10%...");
-                        if let Err(e) = monitor.decrease_brightness(10) {
-                            println!("    Failed to decrease: {}", e);
-                        } else {
-                            println!(
-                                "    Restored brightness: {}",
-                                monitor.get_current_brightness().unwrap_or(0)
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        println!("  Failed to get brightness: {}", e);
-                        continue;
-                    }
-                }
+            //             // Test decrease brightness by 10%
+            //             println!("  Testing: Decrease by 10%...");
+            //             if let Err(e) = monitor.decrease_brightness(10) {
+            //                 println!("    Failed to decrease: {}", e);
+            //             } else {
+            //                 println!(
+            //                     "    Restored brightness: {}",
+            //                     monitor.get_current_brightness().unwrap_or(0)
+            //                 );
+            //             }
+            //         }
+            //         Err(e) => {
+            //             println!("  Failed to get brightness: {}", e);
+            //             continue;
+            //         }
+            //     }
 
-                println!();
-            }
+            //     println!();
+            // }
 
             // Clean up handles
+
             let mut handles: Vec<PHYSICAL_MONITOR> =
                 monitors.into_iter().map(|m| m.handle).collect();
             if let Err(e) = cleanup_monitor_handles(&mut handles) {
@@ -306,4 +311,10 @@ fn main() {
         }
         Err(e) => eprintln!("Error getting monitors: {}", e),
     }
+
+    eframe::run_native(
+        "Tray Bright",
+        get_app_options(),
+        Box::new(|_cc| Ok(Box::new(TrayBrightUI::default()))),
+    )
 }
