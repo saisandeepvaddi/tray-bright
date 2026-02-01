@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use eframe::egui;
-use egui::{Color32, RichText};
+use windows::Win32::Devices::Display::PHYSICAL_MONITOR;
 
 use crate::monitors::{Monitor, MonitorControl, get_monitors};
 
@@ -15,6 +15,17 @@ impl Default for TrayBrightUI {
         Self {
             monitors: vec![],
             last_poll: Instant::now(),
+        }
+    }
+}
+
+impl Drop for TrayBrightUI {
+    fn drop(&mut self) {
+        let mut handles: Vec<PHYSICAL_MONITOR> =
+            self.monitors.drain(..).map(|m| m.handle).collect();
+
+        if let Err(e) = crate::monitors::cleanup_monitor_handles(&mut handles) {
+            eprintln!("Failed to clean up monitor handles: {}", e);
         }
     }
 }
@@ -42,7 +53,6 @@ impl TrayBrightUI {
             ui.vertical(|ui| {
                 ui.label(&mon.name);
                 let min = mon.min_brightness.unwrap_or(0);
-                // let cur = mon.current_brightness.unwrap_or(0);
                 let max = mon.max_brightness.unwrap_or(0);
                 let mut cur = mon.current_brightness.unwrap_or(0);
                 ui.horizontal(|ui| {
