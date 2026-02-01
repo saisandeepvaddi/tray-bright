@@ -21,7 +21,10 @@ impl Default for TrayBrightUI {
 
 impl TrayBrightUI {
     pub fn new() -> anyhow::Result<Self> {
-        let monitors = get_monitors()?;
+        let mut monitors = get_monitors()?;
+        for mon in &mut monitors {
+            let _ = mon.poll_current_brightness();
+        }
         Ok(Self {
             monitors,
             last_poll: Instant::now(),
