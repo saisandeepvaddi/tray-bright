@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use crate::ui::{TrayBrightUI, get_app_options};
 
 mod monitors;
