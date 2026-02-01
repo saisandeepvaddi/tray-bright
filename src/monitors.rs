@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use serde::Deserialize;
 use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitors, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
@@ -12,15 +11,8 @@ use wmi::WMIConnection;
 // Cross-platform trait for monitor brightness control
 pub trait MonitorControl {
     fn new(name: String, handle: PHYSICAL_MONITOR) -> Self;
-    fn poll_current_brightness(&mut self) -> Result<(u32, u32, u32), anyhow::Error>;
-    fn get_brightness_range(&self) -> Option<(u32, u32, u32)>;
-    fn get_current_brightness(&self) -> Option<u32>;
-    fn get_min_brightness(&self) -> Option<u32>;
-    fn get_max_brightness(&self) -> Option<u32>;
+    fn poll_brightness_values(&mut self) -> Result<(u32, u32, u32), anyhow::Error>;
     fn set_brightness(&mut self, value: u32) -> Result<(), anyhow::Error>;
-    fn increase_brightness(&mut self, percent: u32) -> Result<(), anyhow::Error>;
-    fn decrease_brightness(&mut self, percent: u32) -> Result<(), anyhow::Error>;
-    fn name(&self) -> &str;
 }
 
 // WMI Monitor data structure for getting real monitor names
@@ -40,6 +32,9 @@ pub struct Monitor {
     pub max_brightness: Option<u32>,
 }
 
+unsafe impl Send for Monitor {}
+unsafe impl Sync for Monitor {}
+
 impl MonitorControl for Monitor {
     fn new(name: String, handle: PHYSICAL_MONITOR) -> Self {
         Monitor {
@@ -51,7 +46,7 @@ impl MonitorControl for Monitor {
         }
     }
 
-    fn poll_current_brightness(&mut self) -> Result<(u32, u32, u32), anyhow::Error> {
+    fn poll_brightness_values(&mut self) -> Result<(u32, u32, u32), anyhow::Error> {
         unsafe {
             let mut min: u32 = 0;
             let mut current: u32 = 0;
@@ -72,31 +67,8 @@ impl MonitorControl for Monitor {
             self.current_brightness = Some(current);
             self.max_brightness = Some(max);
 
-            Ok((min, current, max))
+            Ok((current, min, max))
         }
-    }
-
-    fn get_brightness_range(&self) -> Option<(u32, u32, u32)> {
-        match (
-            self.min_brightness,
-            self.current_brightness,
-            self.max_brightness,
-        ) {
-            (Some(min), Some(current), Some(max)) => Some((min, current, max)),
-            _ => None,
-        }
-    }
-
-    fn get_current_brightness(&self) -> Option<u32> {
-        self.current_brightness
-    }
-
-    fn get_min_brightness(&self) -> Option<u32> {
-        self.min_brightness
-    }
-
-    fn get_max_brightness(&self) -> Option<u32> {
-        self.max_brightness
     }
 
     fn set_brightness(&mut self, value: u32) -> Result<(), anyhow::Error> {
@@ -114,36 +86,6 @@ impl MonitorControl for Monitor {
 
         self.current_brightness = Some(clamped_value);
         Ok(())
-    }
-
-    fn increase_brightness(&mut self, percent: u32) -> Result<(), anyhow::Error> {
-        let (min, current, max) = match self.get_brightness_range() {
-            Some(range) => range,
-            None => self.poll_current_brightness()?,
-        };
-
-        let range = max - min;
-        let increase_amount = (range * percent) / 100;
-        let new_brightness = (current + increase_amount).min(max);
-
-        self.set_brightness(new_brightness)
-    }
-
-    fn decrease_brightness(&mut self, percent: u32) -> Result<(), anyhow::Error> {
-        let (min, current, max) = match self.get_brightness_range() {
-            Some(range) => range,
-            None => self.poll_current_brightness()?,
-        };
-
-        let range = max - min;
-        let decrease_amount = (range * percent) / 100;
-        let new_brightness = current.saturating_sub(decrease_amount).max(min);
-
-        self.set_brightness(new_brightness)
-    }
-
-    fn name(&self) -> &str {
-        &self.name
     }
 }
 
