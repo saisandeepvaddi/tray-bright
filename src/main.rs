@@ -5,7 +5,12 @@ use std::sync::Mutex;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+    HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
+};
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWDEFAULT};
 
 use crate::ui::{get_app_options, TrayBrightUI};
@@ -13,8 +18,96 @@ use crate::ui::{get_app_options, TrayBrightUI};
 mod monitors;
 mod ui;
 
-static VISIBLE: Mutex<bool> = Mutex::new(true);
+static VISIBLE: Mutex<bool> = Mutex::new(true); // Window starts visible, then we hide it
 static HWND_STORE: Mutex<Option<isize>> = Mutex::new(None);
+
+const APP_NAME: &str = "TrayBright";
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+
+fn to_wide_string(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+pub fn is_startup_enabled() -> bool {
+    unsafe {
+        let key_path = to_wide_string(RUN_KEY);
+        let value_name = to_wide_string(APP_NAME);
+        let mut hkey = HKEY::default();
+
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(key_path.as_ptr()),
+            Some(0),
+            KEY_READ,
+            &mut hkey,
+        );
+
+        if result.is_err() {
+            return false;
+        }
+
+        let query_result = RegQueryValueExW(
+            hkey,
+            PCWSTR(value_name.as_ptr()),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let _ = RegCloseKey(hkey);
+        query_result.is_ok()
+    }
+}
+
+pub fn set_startup_enabled(enabled: bool) -> bool {
+    unsafe {
+        let key_path = to_wide_string(RUN_KEY);
+        let value_name = to_wide_string(APP_NAME);
+        let mut hkey = HKEY::default();
+
+        let result = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(key_path.as_ptr()),
+            Some(0),
+            KEY_WRITE,
+            &mut hkey,
+        );
+
+        if result.is_err() {
+            return false;
+        }
+
+        let success = if enabled {
+            // Get the current executable path
+            let exe_path = std::env::current_exe().ok();
+            if let Some(path) = exe_path {
+                let path_str = path.to_string_lossy();
+                let path_wide = to_wide_string(&path_str);
+                let path_bytes: &[u8] = std::slice::from_raw_parts(
+                    path_wide.as_ptr() as *const u8,
+                    path_wide.len() * 2,
+                );
+
+                RegSetValueExW(
+                    hkey,
+                    PCWSTR(value_name.as_ptr()),
+                    Some(0),
+                    REG_SZ,
+                    Some(path_bytes),
+                )
+                .is_ok()
+            } else {
+                false
+            }
+        } else {
+            RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr())).is_ok()
+        };
+
+        let _ = RegCloseKey(hkey);
+        success
+    }
+}
 
 fn create_tray_icon() -> tray_icon::TrayIcon {
     // Create a simple 16x16 icon (yellow/orange for brightness theme)
@@ -130,6 +223,13 @@ fn main() -> eframe::Result {
             if let RawWindowHandle::Win32(handle) = window_handle {
                 let hwnd_isize: isize = handle.hwnd.into();
                 *HWND_STORE.lock().unwrap() = Some(hwnd_isize);
+
+                // Hide window immediately (tray-first app)
+                let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
+                unsafe {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+                *VISIBLE.lock().unwrap() = false;
             } else {
                 panic!("Unsupported platform - this app only works on Windows");
             }

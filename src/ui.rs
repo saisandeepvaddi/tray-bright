@@ -7,7 +7,7 @@ use eframe::egui::{self, ViewportCommand};
 use windows::Win32::Devices::Display::PHYSICAL_MONITOR;
 
 use crate::monitors::{MonitorControl, get_monitors};
-use crate::hide_window;
+use crate::{hide_window, is_startup_enabled, set_startup_enabled};
 
 enum MonitorCmd {
     SetBrightness(usize, u32), // Monitor Index, value
@@ -24,6 +24,7 @@ pub struct TrayBrightUI {
     min_max: Vec<(u32, u32)>,
     tx_cmd: Sender<MonitorCmd>,
     rx_update: Receiver<MonitorUpdate>,
+    start_on_logon: bool,
 }
 
 const DEFAULT_BRIGHTNESS: u32 = 0;
@@ -92,6 +93,7 @@ impl TrayBrightUI {
             monitor_names,
             tx_cmd,
             rx_update,
+            start_on_logon: is_startup_enabled(),
         })
     }
     fn build_ui(&mut self, ui: &mut egui::Ui) {
@@ -122,6 +124,16 @@ impl TrayBrightUI {
                 })
             });
         }
+
+        ui.add_space(10.0);
+        ui.separator();
+
+        if ui
+            .checkbox(&mut self.start_on_logon, "Start on logon")
+            .changed()
+        {
+            set_startup_enabled(self.start_on_logon);
+        }
     }
 }
 
@@ -140,9 +152,8 @@ impl eframe::App for TrayBrightUI {
 }
 
 pub fn get_app_options() -> eframe::NativeOptions {
-    let options = eframe::NativeOptions {
+    eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
-    };
-    options
+    }
 }
