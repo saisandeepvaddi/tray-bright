@@ -3,10 +3,11 @@ use std::{
     time::Duration,
 };
 
-use eframe::egui;
+use eframe::egui::{self, ViewportCommand};
 use windows::Win32::Devices::Display::PHYSICAL_MONITOR;
 
 use crate::monitors::{MonitorControl, get_monitors};
+use crate::hide_window;
 
 enum MonitorCmd {
     SetBrightness(usize, u32), // Monitor Index, value
@@ -126,6 +127,12 @@ impl TrayBrightUI {
 
 impl eframe::App for TrayBrightUI {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Check if window close button (X) was clicked - hide to tray instead
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+            hide_window();
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             self.build_ui(ui);
         });

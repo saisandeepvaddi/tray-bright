@@ -9,6 +9,7 @@ eframe = {version ="0.33.3", default-features = false, features = ["glow", "acce
 egui = "0.33.3"
 serde = { version = "1.0.228", features = ["derive"] }
 tray-icon = "0.21.3"
+raw-window-handle = "0.6"
 wmi = "0.18.0"
 
 [dependencies.windows]
@@ -17,6 +18,7 @@ features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Devices_Display",
+  "Win32_UI_WindowsAndMessaging",
 ]
 
 [profile.release]

@@ -3161,6 +3161,7 @@ dependencies = [
  "anyhow",
  "eframe",
  "egui",
+ "raw-window-handle",
  "serde",
  "tray-icon",
  "windows 0.62.2",
