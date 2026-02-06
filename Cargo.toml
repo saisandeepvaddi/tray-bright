@@ -1,18 +1,21 @@
 [package]
 name = "tray-bright"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-eframe = {version ="0.33.3", default-features = false, features = ["glow", "accesskit", "default_fonts",]}
+eframe = { version = "0.33.3", default-features = false, features = ["glow", "accesskit", "default_fonts"] }
 egui = "0.33.3"
-serde = { version = "1.0.228", features = ["derive"] }
 tray-icon = "0.21.3"
 raw-window-handle = "0.6"
+
+# --- Windows-only dependencies ---
+[target.'cfg(target_os = "windows")'.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
 wmi = "0.18.0"
 
-[dependencies.windows]
+[target.'cfg(target_os = "windows")'.dependencies.windows]
 version = ">=0.59, <=0.62"
 features = [
   "Win32_Foundation",
@@ -21,6 +24,20 @@ features = [
   "Win32_UI_WindowsAndMessaging",
   "Win32_System_Registry",
 ]
+
+# --- Linux-only dependencies ---
+[target.'cfg(target_os = "linux")'.dependencies]
+brightness = { version = "0.5", features = ["blocking"] }
+auto-launch = "0.5"
+x11 = { version = "2.21", features = ["xlib"] }
+
+# --- macOS-only dependencies ---
+[target.'cfg(target_os = "macos")'.dependencies]
+ddc-hi = "0.4"
+auto-launch = "0.5"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSApplication"] }
+objc2-foundation = "0.3"
 
 [profile.release]
 opt-level = "z"

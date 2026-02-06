@@ -1,13 +1,11 @@
-use std::{
-    sync::mpsc::{Receiver, Sender, channel},
-    time::Duration,
-};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Duration;
 
 use eframe::egui::{self, ViewportCommand};
-use windows::Win32::Devices::Display::PHYSICAL_MONITOR;
 
-use crate::monitors::{MonitorControl, get_monitors};
-use crate::{hide_window, is_startup_enabled, set_startup_enabled};
+use crate::os::{
+    AutostartManager, MonitorHandle, MonitorProvider, PlatformAutostart, PlatformMonitorProvider,
+};
 
 enum MonitorCmd {
     SetBrightness(usize, u32), // Monitor Index, value
@@ -25,16 +23,15 @@ pub struct TrayBrightUI {
     tx_cmd: Sender<MonitorCmd>,
     rx_update: Receiver<MonitorUpdate>,
     start_on_logon: bool,
+    autostart: PlatformAutostart,
 }
 
 const DEFAULT_BRIGHTNESS: u32 = 0;
 
 impl TrayBrightUI {
     pub fn new() -> anyhow::Result<Self> {
-        let mut monitors = get_monitors()?;
-        // for mon in &mut monitors {
-        //     let _ = mon.poll_current_brightness();
-        // }
+        let provider = PlatformMonitorProvider::new();
+        let mut monitors = provider.get_monitors()?;
 
         let (tx_cmd, rx_cmd) = channel::<MonitorCmd>();
         let (tx_update, rx_update) = channel::<MonitorUpdate>();
@@ -44,48 +41,22 @@ impl TrayBrightUI {
         let mut min_max = vec![];
 
         for mon in monitors.iter_mut() {
-            let (cur, min, max) = mon.poll_brightness_values().unwrap_or((
+            let (cur, min, max) = mon.poll_brightness().unwrap_or((
                 DEFAULT_BRIGHTNESS,
                 DEFAULT_BRIGHTNESS,
                 DEFAULT_BRIGHTNESS,
             ));
 
-            monitor_names.push(mon.name.clone());
+            monitor_names.push(mon.name().to_string());
             brightness_values.push(cur);
             min_max.push((min, max));
         }
 
         std::thread::spawn(move || {
-            let mut monitors = monitors;
-            loop {
-                match rx_cmd.try_recv() {
-                    Ok(MonitorCmd::SetBrightness(idx, val)) => {
-                        let _ = monitors[idx].set_brightness(val);
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        break;
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                }
-
-                for (i, mon) in monitors.iter_mut().enumerate() {
-                    if let Ok((current_brightness, _, _)) = mon.poll_brightness_values() {
-                        let _ = tx_update.send(MonitorUpdate {
-                            index: i,
-                            brightness: current_brightness,
-                        });
-                    }
-                }
-
-                std::thread::sleep(Duration::from_secs(1));
-            }
-
-            let mut handles: Vec<PHYSICAL_MONITOR> = monitors.drain(..).map(|m| m.handle).collect();
-
-            if let Err(e) = crate::monitors::cleanup_monitor_handles(&mut handles) {
-                eprintln!("Failed to clean up monitor handles: {}", e);
-            }
+            worker_loop(monitors, provider, rx_cmd, tx_update);
         });
+
+        let autostart = PlatformAutostart::new();
 
         Ok(Self {
             brightness_values,
@@ -93,9 +64,11 @@ impl TrayBrightUI {
             monitor_names,
             tx_cmd,
             rx_update,
-            start_on_logon: is_startup_enabled(),
+            start_on_logon: autostart.is_startup_enabled(),
+            autostart,
         })
     }
+
     fn build_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Tray Bright");
 
@@ -132,7 +105,7 @@ impl TrayBrightUI {
             .checkbox(&mut self.start_on_logon, "Start on logon")
             .changed()
         {
-            set_startup_enabled(self.start_on_logon);
+            self.autostart.set_startup_enabled(self.start_on_logon);
         }
     }
 }
@@ -142,7 +115,7 @@ impl eframe::App for TrayBrightUI {
         // Check if window close button (X) was clicked - hide to tray instead
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            hide_window();
+            crate::hide_window();
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -156,4 +129,41 @@ pub fn get_app_options() -> eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
         ..Default::default()
     }
+}
+
+/// Worker thread: polls brightness and processes set-brightness commands.
+/// Takes ownership of the concrete monitor list and provider for cleanup.
+fn worker_loop<M: MonitorHandle, P: MonitorProvider<Monitor = M>>(
+    mut monitors: Vec<M>,
+    provider: P,
+    rx_cmd: Receiver<MonitorCmd>,
+    tx_update: Sender<MonitorUpdate>,
+) {
+    loop {
+        match rx_cmd.try_recv() {
+            Ok(MonitorCmd::SetBrightness(idx, val)) => {
+                if let Some(mon) = monitors.get_mut(idx) {
+                    let _ = mon.set_brightness(val);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                break;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+
+        for (i, mon) in monitors.iter_mut().enumerate() {
+            if let Ok((current_brightness, _, _)) = mon.poll_brightness() {
+                let _ = tx_update.send(MonitorUpdate {
+                    index: i,
+                    brightness: current_brightness,
+                });
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(1));
+    }
+
+    // Clean up platform-specific handles (e.g. DestroyPhysicalMonitors on Windows)
+    provider.cleanup_monitors(&mut monitors);
 }

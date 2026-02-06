@@ -2,112 +2,18 @@
 
 use std::sync::Mutex;
 
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use raw_window_handle::HasWindowHandle;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_SZ,
-};
-use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWDEFAULT};
 
-use crate::ui::{get_app_options, TrayBrightUI};
+use crate::os::{PlatformWindow, WindowController};
+use crate::ui::{TrayBrightUI, get_app_options};
 
-mod monitors;
+mod os;
+mod platform;
 mod ui;
 
-static VISIBLE: Mutex<bool> = Mutex::new(true); // Window starts visible, then we hide it
-static HWND_STORE: Mutex<Option<isize>> = Mutex::new(None);
-
-const APP_NAME: &str = "TrayBright";
-const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-
-fn to_wide_string(s: &str) -> Vec<u16> {
-    s.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-pub fn is_startup_enabled() -> bool {
-    unsafe {
-        let key_path = to_wide_string(RUN_KEY);
-        let value_name = to_wide_string(APP_NAME);
-        let mut hkey = HKEY::default();
-
-        let result = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(key_path.as_ptr()),
-            Some(0),
-            KEY_READ,
-            &mut hkey,
-        );
-
-        if result.is_err() {
-            return false;
-        }
-
-        let query_result = RegQueryValueExW(
-            hkey,
-            PCWSTR(value_name.as_ptr()),
-            None,
-            None,
-            None,
-            None,
-        );
-
-        let _ = RegCloseKey(hkey);
-        query_result.is_ok()
-    }
-}
-
-pub fn set_startup_enabled(enabled: bool) -> bool {
-    unsafe {
-        let key_path = to_wide_string(RUN_KEY);
-        let value_name = to_wide_string(APP_NAME);
-        let mut hkey = HKEY::default();
-
-        let result = RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(key_path.as_ptr()),
-            Some(0),
-            KEY_WRITE,
-            &mut hkey,
-        );
-
-        if result.is_err() {
-            return false;
-        }
-
-        let success = if enabled {
-            // Get the current executable path
-            let exe_path = std::env::current_exe().ok();
-            if let Some(path) = exe_path {
-                let path_str = path.to_string_lossy();
-                let path_wide = to_wide_string(&path_str);
-                let path_bytes: &[u8] = std::slice::from_raw_parts(
-                    path_wide.as_ptr() as *const u8,
-                    path_wide.len() * 2,
-                );
-
-                RegSetValueExW(
-                    hkey,
-                    PCWSTR(value_name.as_ptr()),
-                    Some(0),
-                    REG_SZ,
-                    Some(path_bytes),
-                )
-                .is_ok()
-            } else {
-                false
-            }
-        } else {
-            RegDeleteValueW(hkey, PCWSTR(value_name.as_ptr())).is_ok()
-        };
-
-        let _ = RegCloseKey(hkey);
-        success
-    }
-}
+static WINDOW: Mutex<Option<PlatformWindow>> = Mutex::new(None);
 
 fn create_tray_icon() -> tray_icon::TrayIcon {
     // Create a simple 16x16 icon (yellow/orange for brightness theme)
@@ -157,49 +63,20 @@ fn setup_event_handlers() {
 }
 
 fn toggle_window_visibility() {
-    let hwnd_opt = *HWND_STORE.lock().unwrap();
-    if let Some(hwnd_isize) = hwnd_opt {
-        let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
-        let mut visible = VISIBLE.lock().unwrap();
-        if *visible {
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_HIDE);
-            }
-            *visible = false;
-        } else {
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
-            }
-            *visible = true;
-        }
+    if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
+        ctrl.toggle();
     }
 }
 
 fn show_window() {
-    let hwnd_opt = *HWND_STORE.lock().unwrap();
-    if let Some(hwnd_isize) = hwnd_opt {
-        let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
-        let mut visible = VISIBLE.lock().unwrap();
-        if !*visible {
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
-            }
-            *visible = true;
-        }
+    if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
+        ctrl.show();
     }
 }
 
 pub fn hide_window() {
-    let hwnd_opt = *HWND_STORE.lock().unwrap();
-    if let Some(hwnd_isize) = hwnd_opt {
-        let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
-        let mut visible = VISIBLE.lock().unwrap();
-        if *visible {
-            unsafe {
-                let _ = ShowWindow(hwnd, SW_HIDE);
-            }
-            *visible = false;
-        }
+    if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
+        ctrl.hide();
     }
 }
 
@@ -215,24 +92,17 @@ fn main() -> eframe::Result {
         get_app_options(),
         Box::new(|cc| {
             // Get the native window handle
-            let window_handle = cc
+            let raw_handle = cc
                 .window_handle()
                 .expect("Failed to get window handle")
                 .as_raw();
 
-            if let RawWindowHandle::Win32(handle) = window_handle {
-                let hwnd_isize: isize = handle.hwnd.into();
-                *HWND_STORE.lock().unwrap() = Some(hwnd_isize);
+            let ctrl = PlatformWindow::from_raw_handle(raw_handle)
+                .expect("Unsupported platform window handle");
 
-                // Hide window immediately (tray-first app)
-                let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
-                unsafe {
-                    let _ = ShowWindow(hwnd, SW_HIDE);
-                }
-                *VISIBLE.lock().unwrap() = false;
-            } else {
-                panic!("Unsupported platform - this app only works on Windows");
-            }
+            // Hide window immediately (tray-first app)
+            ctrl.hide();
+            *WINDOW.lock().unwrap() = Some(ctrl);
 
             let app = TrayBrightUI::new().expect("Failed to initialize app");
             Ok(Box::new(app))
