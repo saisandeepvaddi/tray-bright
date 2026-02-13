@@ -22,20 +22,22 @@ pub struct TrayBrightUI {
     min_max: Vec<(u32, u32)>,
     tx_cmd: Sender<MonitorCmd>,
     rx_update: Receiver<MonitorUpdate>,
+    /// Tracks when the user last interacted with each monitor's slider.
+    /// Poll updates are suppressed during this window so the slider
+    /// doesn't fight the user.
+    user_cooldowns: Vec<Option<Instant>>,
 }
 
 const DEFAULT_BRIGHTNESS: u32 = 0;
 
-/// How long after a set_brightness call before we trust poll results again.
-/// DDC/CI is slow — the hardware needs time to apply the new value.
-const SET_COOLDOWN: Duration = Duration::from_secs(3);
+/// How long to suppress poll updates after user interaction.
+/// Covers DDC/CI round-trip (~1-2s) plus buffer.
+const USER_COOLDOWN: Duration = Duration::from_secs(4);
 
 /// How often to poll hardware for current brightness.
-/// DDC/CI calls are slow (~1-2s each), so polling aggressively is wasteful.
 const POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How often the background thread checks for incoming commands.
-/// Short interval keeps the UI responsive to slider changes.
 const CMD_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 impl TrayBrightUI {
@@ -69,35 +71,49 @@ impl TrayBrightUI {
             let mut cooldowns: Vec<Option<Instant>> = vec![None; monitor_count];
 
             loop {
-                // Drain ALL pending commands (not just one)
+                // Drain all pending commands, collapsing to only the latest
+                // value per monitor. If the user dragged quickly, we skip
+                // intermediate values instead of sending each one over slow
+                // DDC/CI sequentially.
+                let mut pending: Vec<Option<u32>> = vec![None; monitor_count];
+                let mut disconnected = false;
+
                 loop {
                     match rx_cmd.try_recv() {
                         Ok(MonitorCmd::SetBrightness(idx, val)) => {
-                            let _ = monitors[idx].set_brightness(val);
-                            cooldowns[idx] = Some(Instant::now());
-                            // Echo the set value back immediately so the UI
-                            // doesn't have to wait for the next poll cycle.
-                            let _ = tx_update.send(MonitorUpdate {
-                                index: idx,
-                                brightness: val,
-                            });
+                            pending[idx] = Some(val);
                         }
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                            cleanup_monitors(&mut monitors);
-                            return;
+                            disconnected = true;
+                            break;
                         }
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     }
                 }
 
-                // Only poll hardware on a longer interval
+                if disconnected {
+                    cleanup_monitors(&mut monitors);
+                    return;
+                }
+
+                // Apply only the final value for each monitor
+                for (idx, val) in pending.iter().enumerate() {
+                    if let Some(val) = val {
+                        let _ = monitors[idx].set_brightness(*val);
+                        cooldowns[idx] = Some(Instant::now());
+                        let _ = tx_update.send(MonitorUpdate {
+                            index: idx,
+                            brightness: *val,
+                        });
+                    }
+                }
+
+                // Poll hardware on a longer interval, skipping monitors
+                // that were recently set (stale reads cause bounce-back)
                 if last_poll.elapsed() >= POLL_INTERVAL {
                     for (i, mon) in monitors.iter_mut().enumerate() {
-                        // Skip monitors that were recently set — the hardware
-                        // hasn't caught up yet and would report a stale value,
-                        // causing the slider to bounce back.
                         if let Some(set_time) = cooldowns[i] {
-                            if set_time.elapsed() < SET_COOLDOWN {
+                            if set_time.elapsed() < USER_COOLDOWN {
                                 continue;
                             }
                             cooldowns[i] = None;
@@ -113,10 +129,11 @@ impl TrayBrightUI {
                     last_poll = Instant::now();
                 }
 
-                // Short sleep keeps us responsive to commands without busy-waiting
                 std::thread::sleep(CMD_CHECK_INTERVAL);
             }
         });
+
+        let user_cooldowns = vec![None; monitor_count];
 
         Ok(Self {
             brightness_values,
@@ -124,14 +141,22 @@ impl TrayBrightUI {
             monitor_names,
             tx_cmd,
             rx_update,
+            user_cooldowns,
         })
     }
 
     fn build_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Tray Bright");
 
+        // Apply poll updates, but ignore them for monitors the user is
+        // currently interacting with — otherwise stale hardware reads
+        // yank the slider back mid-drag.
         while let Ok(update) = self.rx_update.try_recv() {
-            self.brightness_values[update.index] = update.brightness;
+            let suppressed = self.user_cooldowns[update.index]
+                .is_some_and(|t| t.elapsed() < USER_COOLDOWN);
+            if !suppressed {
+                self.brightness_values[update.index] = update.brightness;
+            }
         }
 
         for i in 0..self.monitor_names.len() {
@@ -147,9 +172,13 @@ impl TrayBrightUI {
 
                     if slider.changed() {
                         self.brightness_values[i] = cur;
+                        // Suppress poll updates while user is dragging
+                        self.user_cooldowns[i] = Some(Instant::now());
                     }
 
                     if slider.drag_stopped() {
+                        // Reset cooldown window from the moment of release
+                        self.user_cooldowns[i] = Some(Instant::now());
                         let _ = self.tx_cmd.send(MonitorCmd::SetBrightness(i, cur));
                     }
                 })
@@ -160,8 +189,6 @@ impl TrayBrightUI {
 
 impl eframe::App for TrayBrightUI {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Schedule periodic repaints so background updates are rendered
-        // even when the user isn't interacting with the window.
         ctx.request_repaint_after(Duration::from_secs(1));
 
         egui::CentralPanel::default().show(ctx, |ui| {
