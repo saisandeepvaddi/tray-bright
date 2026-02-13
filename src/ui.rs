@@ -1,11 +1,14 @@
 use std::{
-    sync::mpsc::{Receiver, Sender, channel},
+    sync::{
+        Arc,
+        mpsc::{Receiver, Sender, channel},
+    },
     time::{Duration, Instant},
 };
 
 use eframe::egui;
 
-use crate::platform::{get_monitors, cleanup_monitors};
+use crate::platform::{cleanup_monitors, get_monitors};
 
 enum MonitorCmd {
     SetBrightness(usize, u32), // Monitor Index, value
@@ -152,8 +155,8 @@ impl TrayBrightUI {
         // currently interacting with — otherwise stale hardware reads
         // yank the slider back mid-drag.
         while let Ok(update) = self.rx_update.try_recv() {
-            let suppressed = self.user_cooldowns[update.index]
-                .is_some_and(|t| t.elapsed() < USER_COOLDOWN);
+            let suppressed =
+                self.user_cooldowns[update.index].is_some_and(|t| t.elapsed() < USER_COOLDOWN);
             if !suppressed {
                 self.brightness_values[update.index] = update.brightness;
             }
@@ -197,10 +200,28 @@ impl eframe::App for TrayBrightUI {
     }
 }
 
+pub fn load_icon_rgba() -> (Vec<u8>, u32, u32) {
+    let png_bytes = include_bytes!("../assets/icons/512x512.png");
+    let img = image::load_from_memory(png_bytes)
+        .expect("Failed to decode embedded icon")
+        .into_rgba8();
+    let (w, h) = img.dimensions();
+    (img.into_raw(), w, h)
+}
+
 pub fn get_app_options() -> eframe::NativeOptions {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
+    let (rgba, width, height) = load_icon_rgba();
+    let icon = egui::IconData {
+        rgba,
+        width,
+        height,
     };
-    options
+
+    eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([320.0, 240.0])
+            .with_app_id("tray-bright")
+            .with_icon(Arc::new(icon)),
+        ..Default::default()
+    }
 }

@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.100"
 eframe = {version ="0.33.3", default-features = false, features = ["glow", "accesskit", "default_fonts", "wayland", "x11"]}
 egui = "0.33.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
 tray-icon = "0.21.3"
 
 [target.'cfg(windows)'.dependencies]
@@ -27,3 +28,22 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[package.metadata.packager]
+productName = "Tray Bright"
+identifier = "com.saisandeepvaddi.traybright"
+version = "0.1.0"
+formats = ["deb", "appimage"]
+
+# ADD THIS: Point to your icon files (glob patterns supported)
+icons = ["assets/icons/*.png"]
+
+binaries = [
+  { path = "tray-bright", main = true }
+]
+
+# Keep your resources as they were for the .deb installation
+resources = [
+  { src = "assets/tray-bright.desktop", target = "/usr/share/applications/tray-bright.desktop" },
+  { src = "assets/icons/512x512.png", target = "/usr/share/icons/hicolor/512x512/apps/tray-bright.png" }
+]

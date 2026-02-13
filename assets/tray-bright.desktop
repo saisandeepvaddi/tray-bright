@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Tray Bright
+Exec=tray-bright
+Icon=tray-bright
+Type=Application
+Terminal=false
+Categories=Utility;
+StartupWMClass=tray-bright

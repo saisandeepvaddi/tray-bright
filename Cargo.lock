@@ -3307,6 +3307,7 @@ dependencies = [
  "anyhow",
  "eframe",
  "egui",
+ "image",
  "serde",
  "tray-icon",
  "windows 0.62.2",
