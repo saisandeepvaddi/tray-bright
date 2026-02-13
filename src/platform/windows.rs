@@ -8,13 +8,6 @@ use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 use windows::core::BOOL;
 use wmi::WMIConnection;
 
-// Cross-platform trait for monitor brightness control
-pub trait MonitorControl {
-    fn new(name: String, handle: PHYSICAL_MONITOR) -> Self;
-    fn poll_brightness_values(&mut self) -> Result<(u32, u32, u32), anyhow::Error>;
-    fn set_brightness(&mut self, value: u32) -> Result<(), anyhow::Error>;
-}
-
 // WMI Monitor data structure for getting real monitor names
 #[derive(Deserialize, Debug)]
 #[serde(rename = "WmiMonitorID")]
@@ -35,7 +28,7 @@ pub struct Monitor {
 unsafe impl Send for Monitor {}
 unsafe impl Sync for Monitor {}
 
-impl MonitorControl for Monitor {
+impl Monitor {
     fn new(name: String, handle: PHYSICAL_MONITOR) -> Self {
         Monitor {
             name,
@@ -46,7 +39,7 @@ impl MonitorControl for Monitor {
         }
     }
 
-    fn poll_brightness_values(&mut self) -> Result<(u32, u32, u32), anyhow::Error> {
+    pub fn poll_brightness_values(&mut self) -> Result<(u32, u32, u32), anyhow::Error> {
         unsafe {
             let mut min: u32 = 0;
             let mut current: u32 = 0;
@@ -71,7 +64,7 @@ impl MonitorControl for Monitor {
         }
     }
 
-    fn set_brightness(&mut self, value: u32) -> Result<(), anyhow::Error> {
+    pub fn set_brightness(&mut self, value: u32) -> Result<(), anyhow::Error> {
         let max = self.max_brightness.unwrap_or(100);
         let min = self.min_brightness.unwrap_or(0);
         let clamped_value = value.clamp(min, max);
@@ -104,7 +97,7 @@ unsafe extern "system" fn enum_display_monitors_callback(
 }
 
 // Get monitor friendly names from WMI (EDID UserFriendlyName)
-pub fn get_wmi_monitor_names() -> Result<Vec<String>, anyhow::Error> {
+fn get_wmi_monitor_names() -> Result<Vec<String>, anyhow::Error> {
     let wmi_con = WMIConnection::with_namespace_path("ROOT\\WMI")?;
     let results: Vec<WmiMonitorID> = wmi_con.query()?;
 
@@ -129,7 +122,7 @@ pub fn get_wmi_monitor_names() -> Result<Vec<String>, anyhow::Error> {
 }
 
 // Get physical monitor handles (for brightness control via DDC/CI)
-pub fn get_physical_monitor_handles() -> Result<Vec<PHYSICAL_MONITOR>, anyhow::Error> {
+fn get_physical_monitor_handles() -> Result<Vec<PHYSICAL_MONITOR>, anyhow::Error> {
     let mut all_handles = Vec::new();
 
     unsafe {
@@ -193,9 +186,11 @@ pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
 }
 
 // Clean up monitor handles when done
-pub fn cleanup_monitor_handles(handles: &mut [PHYSICAL_MONITOR]) -> Result<(), anyhow::Error> {
+pub fn cleanup_monitors(monitors: &mut Vec<Monitor>) {
+    let mut handles: Vec<PHYSICAL_MONITOR> = monitors.drain(..).map(|m| m.handle).collect();
     unsafe {
-        DestroyPhysicalMonitors(handles)?;
+        if let Err(e) = DestroyPhysicalMonitors(&mut handles) {
+            eprintln!("Failed to clean up monitor handles: {}", e);
+        }
     }
-    Ok(())
 }

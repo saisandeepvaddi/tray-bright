@@ -4,9 +4,8 @@ use std::{
 };
 
 use eframe::egui;
-use windows::Win32::Devices::Display::PHYSICAL_MONITOR;
 
-use crate::monitors::{MonitorControl, get_monitors};
+use crate::platform::{get_monitors, cleanup_monitors};
 
 enum MonitorCmd {
     SetBrightness(usize, u32), // Monitor Index, value
@@ -30,9 +29,6 @@ const DEFAULT_BRIGHTNESS: u32 = 0;
 impl TrayBrightUI {
     pub fn new() -> anyhow::Result<Self> {
         let mut monitors = get_monitors()?;
-        // for mon in &mut monitors {
-        //     let _ = mon.poll_current_brightness();
-        // }
 
         let (tx_cmd, rx_cmd) = channel::<MonitorCmd>();
         let (tx_update, rx_update) = channel::<MonitorUpdate>();
@@ -78,11 +74,7 @@ impl TrayBrightUI {
                 std::thread::sleep(Duration::from_secs(1));
             }
 
-            let mut handles: Vec<PHYSICAL_MONITOR> = monitors.drain(..).map(|m| m.handle).collect();
-
-            if let Err(e) = crate::monitors::cleanup_monitor_handles(&mut handles) {
-                eprintln!("Failed to clean up monitor handles: {}", e);
-            }
+            cleanup_monitors(&mut monitors);
         });
 
         Ok(Self {
