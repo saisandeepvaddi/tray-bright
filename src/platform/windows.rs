@@ -1,12 +1,18 @@
+use std::sync::Mutex;
+
+use raw_window_handle::RawWindowHandle;
 use serde::Deserialize;
 use windows::Win32::Devices::Display::{
     DestroyPhysicalMonitors, GetMonitorBrightness, GetNumberOfPhysicalMonitorsFromHMONITOR,
     GetPhysicalMonitorsFromHMONITOR, PHYSICAL_MONITOR, SetMonitorBrightness,
 };
-use windows::Win32::Foundation::{LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
+use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOWDEFAULT};
 use windows::core::BOOL;
 use wmi::WMIConnection;
+
+use crate::os::WindowController;
 
 // WMI Monitor data structure for getting real monitor names
 #[derive(Deserialize, Debug)]
@@ -191,6 +197,72 @@ pub fn cleanup_monitors(monitors: &mut Vec<Monitor>) {
     unsafe {
         if let Err(e) = DestroyPhysicalMonitors(&mut handles) {
             eprintln!("Failed to clean up monitor handles: {}", e);
+        }
+    }
+}
+
+// =========================================================================
+// Window visibility (ShowWindow API)
+// =========================================================================
+
+pub struct WinWindowController {
+    hwnd: isize,
+    visible: Mutex<bool>,
+}
+
+impl WindowController for WinWindowController {
+    fn from_raw_handle(handle: RawWindowHandle) -> Option<Self> {
+        if let RawWindowHandle::Win32(h) = handle {
+            let hwnd: isize = h.hwnd.into();
+            Some(Self {
+                hwnd,
+                visible: Mutex::new(true),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn show(&self) {
+        let mut vis = self.visible.lock().unwrap();
+        if !*vis {
+            let hwnd = HWND(self.hwnd as *mut core::ffi::c_void);
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWDEFAULT);
+            }
+            *vis = true;
+        }
+    }
+
+    fn hide(&self) {
+        let mut vis = self.visible.lock().unwrap();
+        if *vis {
+            let hwnd = HWND(self.hwnd as *mut core::ffi::c_void);
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            *vis = false;
+        }
+    }
+
+    fn toggle(&self) {
+        let vis = *self.visible.lock().unwrap();
+        if vis {
+            self.hide();
+        } else {
+            self.show();
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        *self.visible.lock().unwrap()
+    }
+
+    fn set_visible(&self, visible: bool) {
+        if visible {
+            self.show();
+        } else {
+            self.hide();
         }
     }
 }

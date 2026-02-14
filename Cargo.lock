@@ -3308,10 +3308,12 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "raw-window-handle",
  "serde",
  "tray-icon",
  "windows 0.62.2",
  "wmi",
+ "x11",
 ]
 
 [[package]]

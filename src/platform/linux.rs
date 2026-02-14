@@ -1,6 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::Mutex;
+
+use raw_window_handle::RawWindowHandle;
+
+use crate::os::WindowController;
 
 enum MonitorBackend {
     /// Laptop backlight via /sys/class/backlight/
@@ -197,3 +202,73 @@ pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
 
 /// No-op on Linux (no handles to destroy)
 pub fn cleanup_monitors(_monitors: &mut Vec<Monitor>) {}
+
+// =========================================================================
+// Window visibility (X11)
+// =========================================================================
+
+pub struct LinuxWindowController {
+    display: *mut x11::xlib::Display,
+    window: std::ffi::c_ulong,
+    visible: Mutex<bool>,
+}
+
+unsafe impl Send for LinuxWindowController {}
+unsafe impl Sync for LinuxWindowController {}
+
+impl WindowController for LinuxWindowController {
+    fn from_raw_handle(handle: RawWindowHandle) -> Option<Self> {
+        if let RawWindowHandle::Xlib(h) = handle {
+            let display = h.display.map_or(std::ptr::null_mut(), |p| p.as_ptr());
+            Some(Self {
+                display: display as *mut x11::xlib::Display,
+                window: h.window,
+                visible: Mutex::new(true),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn show(&self) {
+        let mut vis = self.visible.lock().unwrap();
+        if !*vis {
+            unsafe {
+                x11::xlib::XMapRaised(self.display, self.window);
+                x11::xlib::XFlush(self.display);
+            }
+            *vis = true;
+        }
+    }
+
+    fn hide(&self) {
+        let mut vis = self.visible.lock().unwrap();
+        if *vis {
+            unsafe {
+                x11::xlib::XUnmapWindow(self.display, self.window);
+                x11::xlib::XFlush(self.display);
+            }
+            *vis = false;
+        }
+    }
+
+    fn toggle(&self) {
+        if self.is_visible() {
+            self.hide();
+        } else {
+            self.show();
+        }
+    }
+
+    fn is_visible(&self) -> bool {
+        *self.visible.lock().unwrap()
+    }
+
+    fn set_visible(&self, visible: bool) {
+        if visible {
+            self.show();
+        } else {
+            self.hide();
+        }
+    }
+}
