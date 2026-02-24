@@ -203,6 +203,13 @@ impl TrayBrightUI {
 
 impl eframe::App for TrayBrightUI {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Intercept window close — hide to tray instead of exiting
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            crate::hide_window();
+        }
+
         ctx.request_repaint_after(Duration::from_secs(1));
 
         egui::CentralPanel::default()
