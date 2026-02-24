@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use eframe::egui;
+use eframe::egui::{self, RichText};
 
 use crate::platform::{cleanup_monitors, get_monitors};
 
@@ -148,8 +148,13 @@ impl TrayBrightUI {
         })
     }
 
+    pub fn monitor_count(&self) -> usize {
+        self.monitor_names.len()
+    }
+
     fn build_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Tray Bright");
+        ui.add_space(8.0);
 
         // Apply poll updates, but ignore them for monitors the user is
         // currently interacting with — otherwise stale hardware reads
@@ -163,29 +168,35 @@ impl TrayBrightUI {
         }
 
         for i in 0..self.monitor_names.len() {
-            ui.vertical(|ui| {
-                ui.label(&self.monitor_names[i]);
-                let (min, max) = self.min_max[i];
-                let mut cur = self.brightness_values[i];
+            if i > 0 {
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+            }
+            ui.label(RichText::new(&self.monitor_names[i]).strong());
+            ui.add_space(4.0);
+            let (min, max) = self.min_max[i];
+            let mut cur = self.brightness_values[i];
 
-                ui.horizontal(|ui| {
-                    ui.label(min.to_string());
-                    let slider = ui.add(egui::Slider::new(&mut cur, min..=max));
-                    ui.label(max.to_string());
+            let slider_width = ui.available_width() - 60.0;
+            ui.spacing_mut().slider_width = slider_width.max(100.0);
+            let slider = ui.add(
+                egui::Slider::new(&mut cur, min..=max)
+                    .suffix("%")
+                    .show_value(true),
+            );
 
-                    if slider.changed() {
-                        self.brightness_values[i] = cur;
-                        // Suppress poll updates while user is dragging
-                        self.user_cooldowns[i] = Some(Instant::now());
-                    }
+            if slider.changed() {
+                self.brightness_values[i] = cur;
+                // Suppress poll updates while user is dragging
+                self.user_cooldowns[i] = Some(Instant::now());
+            }
 
-                    if slider.drag_stopped() {
-                        // Reset cooldown window from the moment of release
-                        self.user_cooldowns[i] = Some(Instant::now());
-                        let _ = self.tx_cmd.send(MonitorCmd::SetBrightness(i, cur));
-                    }
-                })
-            });
+            if slider.drag_stopped() {
+                // Reset cooldown window from the moment of release
+                self.user_cooldowns[i] = Some(Instant::now());
+                let _ = self.tx_cmd.send(MonitorCmd::SetBrightness(i, cur));
+            }
         }
     }
 }
@@ -194,9 +205,11 @@ impl eframe::App for TrayBrightUI {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(Duration::from_secs(1));
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.build_ui(ui);
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(12.0))
+            .show(ctx, |ui| {
+                self.build_ui(ui);
+            });
     }
 }
 
@@ -209,7 +222,7 @@ pub fn load_icon_rgba() -> (Vec<u8>, u32, u32) {
     (img.into_raw(), w, h)
 }
 
-pub fn get_app_options() -> eframe::NativeOptions {
+pub fn get_app_options(monitor_count: usize) -> eframe::NativeOptions {
     let (rgba, width, height) = load_icon_rgba();
     let icon = egui::IconData {
         rgba,
@@ -217,9 +230,12 @@ pub fn get_app_options() -> eframe::NativeOptions {
         height,
     };
 
+    let height = (80.0 + 60.0 * monitor_count as f32).clamp(120.0, 400.0);
+
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([320.0, 240.0])
+            .with_inner_size([320.0, height])
+            .with_min_inner_size([320.0, 120.0])
             .with_app_id("tray-bright")
             .with_icon(Arc::new(icon)),
         ..Default::default()

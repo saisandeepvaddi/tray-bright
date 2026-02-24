@@ -86,9 +86,12 @@ fn main() -> eframe::Result {
     // Set up event handlers
     setup_event_handlers();
 
+    let app = TrayBrightUI::new().expect("Failed to initialize app");
+    let monitor_count = app.monitor_count();
+
     eframe::run_native(
         "Tray Bright",
-        get_app_options(),
+        get_app_options(monitor_count),
         Box::new(|cc| {
             // Get the native window handle
             let raw_handle = cc
@@ -103,7 +106,6 @@ fn main() -> eframe::Result {
             ctrl.hide();
             *WINDOW.lock().unwrap() = Some(ctrl);
 
-            let app = TrayBrightUI::new().expect("Failed to initialize app");
             Ok(Box::new(app))
         }),
     )
