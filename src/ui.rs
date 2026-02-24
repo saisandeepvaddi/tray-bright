@@ -1,7 +1,8 @@
 use std::{
     sync::{
         Arc,
-        mpsc::{Receiver, Sender, channel},
+        atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, RecvTimeoutError, Sender, channel},
     },
     time::{Duration, Instant},
 };
@@ -29,6 +30,12 @@ pub struct TrayBrightUI {
     /// Poll updates are suppressed during this window so the slider
     /// doesn't fight the user.
     user_cooldowns: Vec<Option<Instant>>,
+    /// Shared visibility flag — when false, worker thread stops
+    /// polling hardware and UI repaints less frequently.
+    visible: Arc<AtomicBool>,
+    /// Frame counter for diagnosing spurious repaints.
+    frame_count: u64,
+    last_fps_check: Instant,
 }
 
 const DEFAULT_BRIGHTNESS: u32 = 0;
@@ -67,6 +74,8 @@ impl TrayBrightUI {
         }
 
         let monitor_count = monitors.len();
+        let visible = Arc::new(AtomicBool::new(false)); // starts hidden
+        let worker_visible = visible.clone();
 
         std::thread::spawn(move || {
             let mut monitors = monitors;
@@ -74,10 +83,28 @@ impl TrayBrightUI {
             let mut cooldowns: Vec<Option<Instant>> = vec![None; monitor_count];
 
             loop {
-                // Drain all pending commands, collapsing to only the latest
-                // value per monitor. If the user dragged quickly, we skip
-                // intermediate values instead of sending each one over slow
-                // DDC/CI sequentially.
+                // When hidden: block on channel, skip all hardware polling
+                if !worker_visible.load(Ordering::Relaxed) {
+                    match rx_cmd.recv_timeout(Duration::from_secs(1)) {
+                        Ok(MonitorCmd::SetBrightness(idx, val)) => {
+                            let _ = monitors[idx].set_brightness(val);
+                            cooldowns[idx] = Some(Instant::now());
+                            let _ = tx_update.send(MonitorUpdate {
+                                index: idx,
+                                brightness: val,
+                            });
+                        }
+                        Err(RecvTimeoutError::Timeout) => {}
+                        Err(RecvTimeoutError::Disconnected) => {
+                            cleanup_monitors(&mut monitors);
+                            return;
+                        }
+                    }
+                    continue;
+                }
+
+                // Visible: drain all pending commands, collapsing to only
+                // the latest value per monitor.
                 let mut pending: Vec<Option<u32>> = vec![None; monitor_count];
                 let mut disconnected = false;
 
@@ -145,7 +172,15 @@ impl TrayBrightUI {
             tx_cmd,
             rx_update,
             user_cooldowns,
+            visible,
+            frame_count: 0,
+            last_fps_check: Instant::now(),
         })
+    }
+
+    /// Returns a clone of the visibility flag for use by tray handlers.
+    pub fn visible_flag(&self) -> Arc<AtomicBool> {
+        self.visible.clone()
     }
 
     pub fn monitor_count(&self) -> usize {
@@ -203,15 +238,36 @@ impl TrayBrightUI {
 
 impl eframe::App for TrayBrightUI {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // --- frame-rate diagnostic (prints to stderr every 5s) ---
+        self.frame_count += 1;
+        let elapsed = self.last_fps_check.elapsed();
+        if elapsed >= Duration::from_secs(5) {
+            let fps = self.frame_count as f64 / elapsed.as_secs_f64();
+            let vis = self.visible.load(Ordering::Relaxed);
+            eprintln!("[tray-bright] {:.1} frames/sec  visible={vis}", fps);
+            self.frame_count = 0;
+            self.last_fps_check = Instant::now();
+        }
+
         // Intercept window close — hide to tray instead of exiting
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.visible.store(false, Ordering::Relaxed);
             crate::hide_window();
         }
 
-        ctx.request_repaint_after(Duration::from_secs(1));
+        let is_visible = self.visible.load(Ordering::Relaxed);
 
+        if is_visible {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
+        // When hidden: schedule NOTHING. The event loop enters
+        // ControlFlow::Wait and truly sleeps until show_window()
+        // calls ctx.request_repaint().
+
+        // Always render the UI so the last frame has valid content.
+        // This prevents the blank-screen flash when re-showing.
         egui::CentralPanel::default()
             .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(12.0))
             .show(ctx, |ui| {

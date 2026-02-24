@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.100"
-eframe = { version = "0.33.3", default-features = false, features = ["glow", "accesskit", "default_fonts", "wayland", "x11"] }
+eframe = { version = "0.33.3", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 egui = "0.33.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 tray-icon = "0.21.3"

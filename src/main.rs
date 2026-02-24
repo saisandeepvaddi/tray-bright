@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
+use eframe::egui;
 use raw_window_handle::HasWindowHandle;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -14,6 +16,8 @@ mod platform;
 mod ui;
 
 static WINDOW: Mutex<Option<PlatformWindow>> = Mutex::new(None);
+static VISIBLE: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static EGUI_CTX: Mutex<Option<egui::Context>> = Mutex::new(None);
 
 fn create_tray_icon() -> tray_icon::TrayIcon {
     let (rgba, width, height) = load_icon_rgba();
@@ -61,21 +65,37 @@ fn setup_event_handlers() {
     }));
 }
 
+fn set_visible(val: bool) {
+    if let Some(ref flag) = *VISIBLE.lock().unwrap() {
+        flag.store(val, Ordering::Relaxed);
+    }
+    // When becoming visible, wake the egui event loop immediately
+    // so the UI renders without waiting for the next scheduled repaint.
+    if val {
+        if let Some(ref ctx) = *EGUI_CTX.lock().unwrap() {
+            ctx.request_repaint();
+        }
+    }
+}
+
 fn toggle_window_visibility() {
     if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
         ctrl.toggle();
+        set_visible(ctrl.is_visible());
     }
 }
 
 fn show_window() {
     if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
         ctrl.show();
+        set_visible(true);
     }
 }
 
 pub fn hide_window() {
     if let Some(ref ctrl) = *WINDOW.lock().unwrap() {
         ctrl.hide();
+        set_visible(false);
     }
 }
 
@@ -87,6 +107,7 @@ fn main() -> eframe::Result {
     setup_event_handlers();
 
     let app = TrayBrightUI::new().expect("Failed to initialize app");
+    *VISIBLE.lock().unwrap() = Some(app.visible_flag());
     let monitor_count = app.monitor_count();
 
     eframe::run_native(
@@ -105,6 +126,9 @@ fn main() -> eframe::Result {
             // Hide window immediately (tray-first app)
             ctrl.hide();
             *WINDOW.lock().unwrap() = Some(ctrl);
+
+            // Store egui context for immediate repaint on show
+            *EGUI_CTX.lock().unwrap() = Some(cc.egui_ctx.clone());
 
             Ok(Box::new(app))
         }),
