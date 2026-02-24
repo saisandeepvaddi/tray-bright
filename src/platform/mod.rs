@@ -1,7 +1,7 @@
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use self::windows::{Monitor, cleanup_monitors, get_monitors, WinWindowController};
+pub use self::windows::{cleanup_monitors, get_monitors, WinWindowController};
 
 #[cfg(target_os = "linux")]
 mod linux;

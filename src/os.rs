@@ -23,7 +23,9 @@ pub trait WindowController: Send + Sync + 'static {
     fn show(&self);
     fn hide(&self);
     fn toggle(&self);
+    #[allow(dead_code)]
     fn is_visible(&self) -> bool;
+    #[allow(dead_code)]
     fn set_visible(&self, visible: bool);
 }
 
