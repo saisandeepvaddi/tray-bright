@@ -39,17 +39,37 @@ strip = true
 productName = "Tray Bright"
 identifier = "com.saisandeepvaddi.traybright"
 version = "0.1.0"
-formats = ["deb", "appimage"]
-
-# ADD THIS: Point to your icon files (glob patterns supported)
-icons = ["assets/icons/*.png"]
+description = "System tray brightness control for external monitors"
+authors = ["Sai Sandeep Vaddi"]
+homepage = "https://github.com/saisandeepvaddi/tray-bright"
+icons = ["assets/icons/32x32.png", "assets/icons/128x128.png", "assets/icons/256x256.png", "assets/icons/512x512.png", "assets/icons/icon.ico", "assets/icons/icon.icns"]
+outDir = "./dist"
+beforePackagingCommand = "cargo build --release"
 
 binaries = [
   { path = "tray-bright", main = true }
 ]
 
-# Keep your resources as they were for the .deb installation
-resources = [
-  { src = "assets/tray-bright.desktop", target = "/usr/share/applications/tray-bright.desktop" },
-  { src = "assets/icons/512x512.png", target = "/usr/share/icons/hicolor/512x512/apps/tray-bright.png" }
-]
+# Windows — NSIS installer
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+compression = "lzma"
+installerIcon = "assets/icons/icon.ico"
+
+# macOS — DMG disk image
+[package.metadata.packager.dmg]
+windowSize = { width = 540, height = 380 }
+appPosition = { x = 140, y = 180 }
+appFolderPosition = { x = 400, y = 180 }
+
+# Linux — .desktop entry and icons
+[package.metadata.packager.deb]
+desktopTemplate = "assets/tray-bright.desktop"
+
+[[package.metadata.packager.resources]]
+src = "assets/tray-bright.desktop"
+target = "/usr/share/applications/tray-bright.desktop"
+
+[[package.metadata.packager.resources]]
+src = "assets/icons/512x512.png"
+target = "/usr/share/icons/hicolor/512x512/apps/tray-bright.png"
