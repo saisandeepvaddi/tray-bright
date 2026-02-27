@@ -51,6 +51,18 @@ impl Monitor {
 
 /// Discover DDC-capable external monitors.
 pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
+    // Ensure NSApplication is initialised before accessing CoreGraphics APIs.
+    // DdcMonitor::enumerate() calls CGDisplay::active_displays() internally,
+    // which requires the CGS window-server connection that NSApplication sets up.
+    // Without this, macOS fires: "Assertion Failed (CGAtomicGet), CGSConnectionByID".
+    {
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::NSApplication;
+        if let Some(mtm) = MainThreadMarker::new() {
+            let _ = NSApplication::sharedApplication(mtm);
+        }
+    }
+
     let ddc_monitors = DdcMonitor::enumerate()?;
 
     if ddc_monitors.is_empty() {
