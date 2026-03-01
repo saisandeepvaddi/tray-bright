@@ -1,10 +1,5 @@
-use std::sync::Mutex;
-
 use ddc::Ddc;
 use ddc_macos::Monitor as DdcMonitor;
-use raw_window_handle::RawWindowHandle;
-
-use crate::os::WindowController;
 
 // =========================================================================
 // Monitor brightness (DDC/CI via IOKit)
@@ -95,84 +90,3 @@ pub fn get_monitors() -> Result<Vec<Monitor>, anyhow::Error> {
 /// No-op on macOS (no handles to destroy).
 pub fn cleanup_monitors(_monitors: &mut Vec<Monitor>) {}
 
-// =========================================================================
-// Window visibility (AppKit via objc2)
-// =========================================================================
-
-pub struct MacWindowController {
-    /// Raw pointer to the NSView obtained from AppKitWindowHandle.
-    ns_view: *mut std::ffi::c_void,
-    visible: Mutex<bool>,
-}
-
-unsafe impl Send for MacWindowController {}
-unsafe impl Sync for MacWindowController {}
-
-impl WindowController for MacWindowController {
-    fn from_raw_handle(handle: RawWindowHandle) -> Option<Self> {
-        if let RawWindowHandle::AppKit(h) = handle {
-            Some(Self {
-                ns_view: h.ns_view.as_ptr(),
-                visible: Mutex::new(true),
-            })
-        } else {
-            None
-        }
-    }
-
-    fn show(&self) {
-        let mut vis = self.visible.lock().unwrap();
-        if !*vis {
-            unsafe {
-                use objc2::MainThreadMarker;
-                use objc2_app_kit::{NSApplication, NSView};
-
-                let ns_view: &NSView = &*(self.ns_view as *const NSView);
-                if let Some(window) = ns_view.window() {
-                    // Activate the application so the window can receive focus.
-                    if let Some(mtm) = MainThreadMarker::new() {
-                        let app = NSApplication::sharedApplication(mtm);
-                        app.activate();
-                    }
-                    window.makeKeyAndOrderFront(None);
-                }
-            }
-            *vis = true;
-        }
-    }
-
-    fn hide(&self) {
-        let mut vis = self.visible.lock().unwrap();
-        if *vis {
-            unsafe {
-                use objc2_app_kit::NSView;
-
-                let ns_view: &NSView = &*(self.ns_view as *const NSView);
-                if let Some(window) = ns_view.window() {
-                    window.orderOut(None);
-                }
-            }
-            *vis = false;
-        }
-    }
-
-    fn toggle(&self) {
-        if self.is_visible() {
-            self.hide();
-        } else {
-            self.show();
-        }
-    }
-
-    fn is_visible(&self) -> bool {
-        *self.visible.lock().unwrap()
-    }
-
-    fn set_visible(&self, visible: bool) {
-        if visible {
-            self.show();
-        } else {
-            self.hide();
-        }
-    }
-}
